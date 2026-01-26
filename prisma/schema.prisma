@@ -1,0 +1,142 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// User model for authentication
+model User {
+  id            String    @id @default(uuid())
+  email         String    @unique
+  name          String?
+  password      String
+  role          String    @default("CONSULTANT") // ADMIN, PLANNER, CONSULTANT
+  employeeId    String?   @unique
+  employee      Employee? @relation(fields: [employeeId], references: [id])
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+// Employee model
+model Employee {
+  id            String             @id @default(uuid())
+  name          String
+  email         String             @unique
+  timechimpId   String?
+  hourlyRate    Float              @default(125)
+  isActive      Boolean            @default(true)
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  user          User?
+  contracts     EmployeeContract[]
+  leaves        Leave[]
+  forecastEntries ForecastEntry[]
+}
+
+// Employee Contract model (tracks contract changes over time)
+model EmployeeContract {
+  id            String    @id @default(uuid())
+  employeeId    String
+  employee      Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  hoursPerWeek  Float
+  billableTarget Float    @default(0.80)
+  startDate     DateTime
+  endDate       DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+// Leave model
+model Leave {
+  id          String    @id @default(uuid())
+  employeeId  String
+  employee    Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  startDate   DateTime
+  endDate     DateTime
+  hours       Float
+  type        String    // VACATION, SICK, OTHER
+  status      String    @default("PENDING") // PENDING, APPROVED, REJECTED
+  notes       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+// Client model
+model Client {
+  id              String         @id @default(uuid())
+  name            String
+  timechimpId     String?
+  clientType      String         @default("B2B") // B2B, B2C
+  classification  String         @default("C")   // A, B, C, D
+  hourlyRate      Float
+  contractStart   DateTime?
+  contractEnd     DateTime?
+  isActive        Boolean        @default(true)
+  notes           String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  budgets         ClientBudget[]
+}
+
+// Client Budget model (per month)
+model ClientBudget {
+  id                  String          @id @default(uuid())
+  clientId            String
+  client              Client          @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  year                Int
+  month               Int
+  totalBudget         Float
+  budgetType          String          // SUBSCRIPTION, PROJECT, PROSPECT, TOOLING, NACALCULATIE, INHUUR
+  prospectProbability Float?
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+
+  forecastEntries     ForecastEntry[]
+
+  @@unique([clientId, year, month, budgetType])
+}
+
+// Forecast Entry model
+model ForecastEntry {
+  id              String       @id @default(uuid())
+  clientBudgetId  String
+  clientBudget    ClientBudget @relation(fields: [clientBudgetId], references: [id], onDelete: Cascade)
+  employeeId      String
+  employee        Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  taskDescription String
+  budgetAmount    Float
+  notes           String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+}
+
+// Public Holiday model
+model PublicHoliday {
+  id        String   @id @default(uuid())
+  date      DateTime @unique
+  name      String
+  year      Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// Sales Target model
+model SalesTarget {
+  id             String   @id @default(uuid())
+  year           Int
+  month          Int
+  targetAmount   Float
+  avgClientValue Float
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([year, month])
+}
