@@ -20,7 +20,9 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible"
-import { ChevronDown, Search, Filter } from "lucide-react"
+import { ChevronDown, Search, Filter, Lightbulb, ArrowRight, AlertTriangle } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { formatPercentage, getDutchMonth, getProgressBarColor } from "@/lib/utils"
 import { cn } from "@/lib/utils"
 
@@ -73,22 +75,61 @@ interface CapacityData {
   }
 }
 
+interface Suggestion {
+  id: string
+  type: "OVERLOAD" | "UNDERLOAD" | "VACATION_COVER" | "REASSIGNMENT"
+  priority: "LOW" | "MEDIUM" | "HIGH"
+  employeeId: string
+  employeeName: string
+  title: string
+  description: string
+  suggestedAction: {
+    type: string
+    fromEmployeeId?: string
+    toEmployeeId?: string
+    hours?: number
+    clientId?: string
+    clientName?: string
+  }
+}
+
+interface SuggestionsData {
+  suggestions: Suggestion[]
+  summary: {
+    overloadedCount: number
+    underloadedCount: number
+    vacationCount: number
+    suggestionCount: number
+  }
+}
+
 export default function CapacityPage() {
   const { selectedMonth, selectedYear, setSelectedMonth, setSelectedYear } = useMonth()
   const [data, setData] = useState<CapacityData | null>(null)
+  const [suggestionsData, setSuggestionsData] = useState<SuggestionsData | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState("")
   const [showOnlyAlerts, setShowOnlyAlerts] = useState(false)
+  const [showSuggestions, setShowSuggestions] = useState(true)
   const [expandedEmployee, setExpandedEmployee] = useState<string | null>(null)
 
   useEffect(() => {
     const fetchData = async () => {
       setIsLoading(true)
       try {
-        const res = await fetch(`/api/capacity?year=${selectedYear}&month=${selectedMonth}`)
-        if (res.ok) {
-          const capacityData = await res.json()
+        const [capacityRes, suggestionsRes] = await Promise.all([
+          fetch(`/api/capacity?year=${selectedYear}&month=${selectedMonth}`),
+          fetch(`/api/capacity/suggestions?year=${selectedYear}&month=${selectedMonth}`),
+        ])
+
+        if (capacityRes.ok) {
+          const capacityData = await capacityRes.json()
           setData(capacityData)
+        }
+
+        if (suggestionsRes.ok) {
+          const suggestData = await suggestionsRes.json()
+          setSuggestionsData(suggestData)
         }
       } catch (error) {
         console.error("Failed to fetch capacity data:", error)
@@ -190,6 +231,102 @@ export default function CapacityPage() {
             </CardContent>
           </Card>
         </div>
+
+        {/* Smart Suggestions */}
+        {suggestionsData && suggestionsData.suggestions.length > 0 && showSuggestions && (
+          <Card className="border-blue-200 bg-blue-50">
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle className="flex items-center gap-2 text-blue-800">
+                  <Lightbulb className="h-5 w-5" />
+                  Slimme Suggesties ({suggestionsData.suggestions.length})
+                </CardTitle>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowSuggestions(false)}
+                  className="text-blue-600"
+                >
+                  Verbergen
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                {suggestionsData.suggestions.slice(0, 5).map((suggestion) => (
+                  <Alert
+                    key={suggestion.id}
+                    className={cn(
+                      "border-l-4",
+                      suggestion.priority === "HIGH"
+                        ? "border-l-red-500 bg-red-50"
+                        : suggestion.priority === "MEDIUM"
+                        ? "border-l-amber-500 bg-amber-50"
+                        : "border-l-blue-500 bg-blue-50"
+                    )}
+                  >
+                    <div className="flex items-start gap-3">
+                      {suggestion.type === "REASSIGNMENT" ? (
+                        <ArrowRight className="h-5 w-5 text-blue-600 mt-0.5" />
+                      ) : suggestion.type === "OVERLOAD" ? (
+                        <AlertTriangle className="h-5 w-5 text-red-600 mt-0.5" />
+                      ) : (
+                        <Lightbulb className="h-5 w-5 text-amber-600 mt-0.5" />
+                      )}
+                      <div className="flex-1">
+                        <AlertTitle className="text-sm font-medium">
+                          {suggestion.title}
+                          <Badge
+                            variant={
+                              suggestion.priority === "HIGH"
+                                ? "danger"
+                                : suggestion.priority === "MEDIUM"
+                                ? "warning"
+                                : "secondary"
+                            }
+                            className="ml-2"
+                          >
+                            {suggestion.priority === "HIGH"
+                              ? "Urgent"
+                              : suggestion.priority === "MEDIUM"
+                              ? "Aanbevolen"
+                              : "Optioneel"}
+                          </Badge>
+                        </AlertTitle>
+                        <AlertDescription className="text-sm text-gray-600 mt-1">
+                          {suggestion.description}
+                        </AlertDescription>
+                        {suggestion.suggestedAction.type === "TRANSFER" && (
+                          <div className="mt-2 text-xs bg-white rounded p-2">
+                            Suggestie: Verplaats <strong>{suggestion.suggestedAction.hours?.toFixed(0)} uur</strong> werk
+                            voor <strong>{suggestion.suggestedAction.clientName}</strong> naar andere collega
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </Alert>
+                ))}
+                {suggestionsData.suggestions.length > 5 && (
+                  <p className="text-sm text-blue-600 text-center">
+                    En nog {suggestionsData.suggestions.length - 5} andere suggesties...
+                  </p>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Show suggestions button if hidden */}
+        {suggestionsData && suggestionsData.suggestions.length > 0 && !showSuggestions && (
+          <Button
+            variant="outline"
+            onClick={() => setShowSuggestions(true)}
+            className="w-full border-blue-200 text-blue-600 hover:bg-blue-50"
+          >
+            <Lightbulb className="h-4 w-4 mr-2" />
+            Toon {suggestionsData.suggestions.length} suggesties
+          </Button>
+        )}
 
         {/* Filters */}
         <Card>

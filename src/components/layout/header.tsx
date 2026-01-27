@@ -20,6 +20,7 @@ interface HeaderProps {
   onMonthChange: (month: number) => void
   onYearChange: (year: number) => void
   alertCount?: number
+  showMonthSelector?: boolean
 }
 
 export function Header({
@@ -30,6 +31,7 @@ export function Header({
   onMonthChange,
   onYearChange,
   alertCount = 0,
+  showMonthSelector = true,
 }: HeaderProps) {
   const currentYear = new Date().getFullYear()
   const years = [currentYear - 1, currentYear, currentYear + 1]
@@ -45,21 +47,23 @@ export function Header({
       <div className="flex items-center gap-4">
         {/* Month/Year selector */}
         <div className="flex items-center gap-2">
-          <Select
-            value={selectedMonth.toString()}
-            onValueChange={(value) => onMonthChange(parseInt(value))}
-          >
-            <SelectTrigger className="w-[140px]">
-              <SelectValue placeholder="Maand" />
-            </SelectTrigger>
-            <SelectContent>
-              {months.map((month) => (
-                <SelectItem key={month} value={month.toString()}>
-                  {getDutchMonth(month)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          {showMonthSelector && (
+            <Select
+              value={selectedMonth.toString()}
+              onValueChange={(value) => onMonthChange(parseInt(value))}
+            >
+              <SelectTrigger className="w-[140px]">
+                <SelectValue placeholder="Maand" />
+              </SelectTrigger>
+              <SelectContent>
+                {months.map((month) => (
+                  <SelectItem key={month} value={month.toString()}>
+                    {getDutchMonth(month)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
 
           <Select
             value={selectedYear.toString()}

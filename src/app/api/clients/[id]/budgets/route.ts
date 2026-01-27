@@ -7,6 +7,7 @@ import { z } from "zod"
 const createBudgetSchema = z.object({
   year: z.number().int().min(2020).max(2100),
   month: z.number().int().min(1).max(12),
+  endMonth: z.number().int().min(1).max(12).optional(), // For multi-month budgets
   totalBudget: z.number().min(0),
   budgetType: z.enum([
     "SUBSCRIPTION",
@@ -66,7 +67,7 @@ export async function GET(
   }
 }
 
-// POST /api/clients/[id]/budgets - Create new budget
+// POST /api/clients/[id]/budgets - Create new budget (supports multi-month)
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -81,37 +82,66 @@ export async function POST(
     const body = await request.json()
     const validatedData = createBudgetSchema.parse(body)
 
-    // Check if budget already exists for this period and type
-    const existingBudget = await prisma.clientBudget.findUnique({
+    const startMonth = validatedData.month
+    const endMonth = validatedData.endMonth || validatedData.month
+
+    // Generate list of months to create budgets for
+    const months: number[] = []
+    if (endMonth >= startMonth) {
+      for (let m = startMonth; m <= endMonth; m++) {
+        months.push(m)
+      }
+    } else {
+      // Handle year wrap (e.g., November to February)
+      for (let m = startMonth; m <= 12; m++) {
+        months.push(m)
+      }
+      for (let m = 1; m <= endMonth; m++) {
+        months.push(m)
+      }
+    }
+
+    // Check which months already have budgets
+    const existingBudgets = await prisma.clientBudget.findMany({
       where: {
-        clientId_year_month_budgetType: {
-          clientId: id,
-          year: validatedData.year,
-          month: validatedData.month,
-          budgetType: validatedData.budgetType,
-        },
+        clientId: id,
+        year: validatedData.year,
+        month: { in: months },
+        budgetType: validatedData.budgetType,
       },
     })
 
-    if (existingBudget) {
+    const existingMonths = existingBudgets.map((b) => b.month)
+    const monthsToCreate = months.filter((m) => !existingMonths.includes(m))
+
+    if (monthsToCreate.length === 0) {
       return NextResponse.json(
-        { error: "Budget voor deze periode en type bestaat al" },
+        { error: "Budgetten voor alle geselecteerde maanden bestaan al" },
         { status: 400 }
       )
     }
 
-    const budget = await prisma.clientBudget.create({
-      data: {
-        clientId: id,
-        year: validatedData.year,
-        month: validatedData.month,
-        totalBudget: validatedData.totalBudget,
-        budgetType: validatedData.budgetType,
-        prospectProbability: validatedData.prospectProbability,
-      },
-    })
+    // Create budgets for all requested months
+    const createdBudgets = await prisma.$transaction(
+      monthsToCreate.map((month) =>
+        prisma.clientBudget.create({
+          data: {
+            clientId: id,
+            year: validatedData.year,
+            month,
+            totalBudget: validatedData.totalBudget,
+            budgetType: validatedData.budgetType,
+            prospectProbability: validatedData.prospectProbability,
+          },
+        })
+      )
+    )
 
-    return NextResponse.json(budget, { status: 201 })
+    return NextResponse.json({
+      created: createdBudgets,
+      skipped: existingMonths,
+      message: `${createdBudgets.length} budget(ten) aangemaakt${existingMonths.length > 0 ? `, ${existingMonths.length} overgeslagen (bestonden al)` : ''}`
+    }, { status: 201 })
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json({ error: error.errors }, { status: 400 })

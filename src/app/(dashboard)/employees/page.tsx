@@ -24,8 +24,15 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
-import { Plus, Search, Edit, UserX, Calendar, FileText } from "lucide-react"
-import { getDutchMonth } from "@/lib/utils"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { Plus, Search, Edit, UserX, Calendar, FileText, Palmtree } from "lucide-react"
+import { getDutchMonth, formatPercentage } from "@/lib/utils"
 
 interface Employee {
   id: string
@@ -59,6 +66,7 @@ export default function EmployeesPage() {
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false)
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null)
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
+  const [isLeaveDialogOpen, setIsLeaveDialogOpen] = useState(false)
 
   // Form state
   const [formData, setFormData] = useState({
@@ -66,6 +74,15 @@ export default function EmployeesPage() {
     email: "",
     hoursPerWeek: "40",
     billableTarget: "0.8",
+  })
+
+  // Leave form state
+  const [leaveForm, setLeaveForm] = useState({
+    startDate: "",
+    endDate: "",
+    hours: "",
+    type: "VACATION",
+    notes: "",
   })
 
   const isAdmin = session?.user?.role === "ADMIN"
@@ -159,6 +176,43 @@ export default function EmployeesPage() {
       billableTarget: employee.contracts[0]?.billableTarget.toString() || "0.8",
     })
     setIsEditDialogOpen(true)
+  }
+
+  const openLeaveDialog = (employee: Employee) => {
+    setSelectedEmployee(employee)
+    setLeaveForm({
+      startDate: "",
+      endDate: "",
+      hours: "",
+      type: "VACATION",
+      notes: "",
+    })
+    setIsLeaveDialogOpen(true)
+  }
+
+  const handleAddLeave = async () => {
+    if (!selectedEmployee) return
+
+    try {
+      const res = await fetch(`/api/employees/${selectedEmployee.id}/leaves`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          startDate: leaveForm.startDate,
+          endDate: leaveForm.endDate,
+          hours: parseFloat(leaveForm.hours),
+          type: leaveForm.type,
+          notes: leaveForm.notes || null,
+        }),
+      })
+
+      if (res.ok) {
+        setIsLeaveDialogOpen(false)
+        fetchEmployees()
+      }
+    } catch (error) {
+      console.error("Failed to add leave:", error)
+    }
   }
 
   const filteredEmployees = employees.filter((emp) =>
@@ -258,6 +312,7 @@ export default function EmployeesPage() {
                   <TableHead>E-mail</TableHead>
                   <TableHead>Contract</TableHead>
                   <TableHead>Target</TableHead>
+                  <TableHead>Verlof</TableHead>
                   <TableHead>Status</TableHead>
                   {isAdmin && <TableHead className="text-right">Acties</TableHead>}
                 </TableRow>
@@ -265,6 +320,8 @@ export default function EmployeesPage() {
               <TableBody>
                 {filteredEmployees.map((employee) => {
                   const contract = activeContract(employee)
+                  const pendingLeaves = employee.leaves.filter(l => l.status === "PENDING").length
+                  const approvedLeaves = employee.leaves.filter(l => l.status === "APPROVED").length
                   return (
                     <TableRow key={employee.id} className={!employee.isActive ? "opacity-50" : ""}>
                       <TableCell>
@@ -275,7 +332,24 @@ export default function EmployeesPage() {
                         {contract ? `${contract.hoursPerWeek} uur/week` : "-"}
                       </TableCell>
                       <TableCell>
-                        {contract ? `${(contract.billableTarget * 100).toFixed(0)}%` : "-"}
+                        {contract ? formatPercentage(contract.billableTarget, 0) : "-"}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex gap-1">
+                          {approvedLeaves > 0 && (
+                            <Badge variant="success" className="text-xs">
+                              {approvedLeaves} goedgekeurd
+                            </Badge>
+                          )}
+                          {pendingLeaves > 0 && (
+                            <Badge variant="warning" className="text-xs">
+                              {pendingLeaves} pending
+                            </Badge>
+                          )}
+                          {approvedLeaves === 0 && pendingLeaves === 0 && (
+                            <span className="text-gray-400 text-sm">-</span>
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell>
                         <Badge variant={employee.isActive ? "success" : "secondary"}>
@@ -285,6 +359,14 @@ export default function EmployeesPage() {
                       {isAdmin && (
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => openLeaveDialog(employee)}
+                            >
+                              <Palmtree className="h-4 w-4 mr-1" />
+                              Verlof
+                            </Button>
                             <Button
                               variant="ghost"
                               size="icon"
@@ -407,6 +489,83 @@ export default function EmployeesPage() {
               Annuleren
             </Button>
             <Button onClick={handleEditEmployee}>Opslaan</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add Leave Dialog */}
+      <Dialog open={isLeaveDialogOpen} onOpenChange={setIsLeaveDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Verlof toevoegen - {selectedEmployee?.name}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="startDate">Startdatum</Label>
+                <Input
+                  id="startDate"
+                  type="date"
+                  value={leaveForm.startDate}
+                  onChange={(e) => setLeaveForm({ ...leaveForm, startDate: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="endDate">Einddatum</Label>
+                <Input
+                  id="endDate"
+                  type="date"
+                  value={leaveForm.endDate}
+                  onChange={(e) => setLeaveForm({ ...leaveForm, endDate: e.target.value })}
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="hours">Aantal uren</Label>
+                <Input
+                  id="hours"
+                  type="number"
+                  value={leaveForm.hours}
+                  onChange={(e) => setLeaveForm({ ...leaveForm, hours: e.target.value })}
+                  placeholder="bv. 40"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Type verlof</Label>
+                <Select
+                  value={leaveForm.type}
+                  onValueChange={(value) => setLeaveForm({ ...leaveForm, type: value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="VACATION">Vakantie</SelectItem>
+                    <SelectItem value="SICK">Ziekte</SelectItem>
+                    <SelectItem value="OTHER">Overig</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="notes">Notities (optioneel)</Label>
+              <Input
+                id="notes"
+                value={leaveForm.notes}
+                onChange={(e) => setLeaveForm({ ...leaveForm, notes: e.target.value })}
+                placeholder="Optionele notities..."
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsLeaveDialogOpen(false)}>
+              Annuleren
+            </Button>
+            <Button onClick={handleAddLeave}>
+              <Palmtree className="h-4 w-4 mr-2" />
+              Verlof toevoegen
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

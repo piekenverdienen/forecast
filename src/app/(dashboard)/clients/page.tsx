@@ -41,6 +41,7 @@ interface Client {
   clientType: string
   classification: string
   hourlyRate: number
+  paymentTerm: string
   isActive: boolean
   notes: string | null
   budgets: {
@@ -71,6 +72,7 @@ export default function ClientsPage() {
     clientType: "B2B",
     classification: "C",
     hourlyRate: "100",
+    paymentTerm: "POSTPAID",
     notes: "",
   })
 
@@ -78,6 +80,8 @@ export default function ClientsPage() {
     totalBudget: "",
     budgetType: "SUBSCRIPTION",
     prospectProbability: "0.5",
+    endMonth: "12", // Default to end of year
+    useEndMonth: true, // Toggle for multi-month
   })
 
   const fetchClients = async () => {
@@ -109,13 +113,14 @@ export default function ClientsPage() {
           clientType: formData.clientType,
           classification: formData.classification,
           hourlyRate: parseFloat(formData.hourlyRate),
+          paymentTerm: formData.paymentTerm,
           notes: formData.notes || null,
         }),
       })
 
       if (res.ok) {
         setIsAddDialogOpen(false)
-        setFormData({ name: "", clientType: "B2B", classification: "C", hourlyRate: "100", notes: "" })
+        setFormData({ name: "", clientType: "B2B", classification: "C", hourlyRate: "100", paymentTerm: "POSTPAID", notes: "" })
         fetchClients()
       }
     } catch (error) {
@@ -135,6 +140,7 @@ export default function ClientsPage() {
           clientType: formData.clientType,
           classification: formData.classification,
           hourlyRate: parseFloat(formData.hourlyRate),
+          paymentTerm: formData.paymentTerm,
           notes: formData.notes || null,
         }),
       })
@@ -174,6 +180,7 @@ export default function ClientsPage() {
         body: JSON.stringify({
           year: selectedYear,
           month: selectedMonth,
+          endMonth: budgetForm.useEndMonth ? parseInt(budgetForm.endMonth) : undefined,
           totalBudget: parseFloat(budgetForm.totalBudget),
           budgetType: budgetForm.budgetType,
           prospectProbability: budgetForm.budgetType === "PROSPECT"
@@ -184,7 +191,7 @@ export default function ClientsPage() {
 
       if (res.ok) {
         setIsBudgetDialogOpen(false)
-        setBudgetForm({ totalBudget: "", budgetType: "SUBSCRIPTION", prospectProbability: "0.5" })
+        setBudgetForm({ totalBudget: "", budgetType: "SUBSCRIPTION", prospectProbability: "0.5", endMonth: "12", useEndMonth: true })
         fetchClients()
       }
     } catch (error) {
@@ -199,6 +206,7 @@ export default function ClientsPage() {
       clientType: client.clientType,
       classification: client.classification,
       hourlyRate: client.hourlyRate.toString(),
+      paymentTerm: client.paymentTerm || "POSTPAID",
       notes: client.notes || "",
     })
     setIsEditDialogOpen(true)
@@ -206,7 +214,13 @@ export default function ClientsPage() {
 
   const openBudgetDialog = (client: Client) => {
     setSelectedClient(client)
-    setBudgetForm({ totalBudget: "", budgetType: "SUBSCRIPTION", prospectProbability: "0.5" })
+    setBudgetForm({
+      totalBudget: "",
+      budgetType: "SUBSCRIPTION",
+      prospectProbability: "0.5",
+      endMonth: "12",
+      useEndMonth: true
+    })
     setIsBudgetDialogOpen(true)
   }
 
@@ -439,14 +453,31 @@ export default function ClientsPage() {
                 </Select>
               </div>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="rate">Uurtarief (€)</Label>
-              <Input
-                id="rate"
-                type="number"
-                value={formData.hourlyRate}
-                onChange={(e) => setFormData({ ...formData, hourlyRate: e.target.value })}
-              />
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="rate">Uurtarief (€)</Label>
+                <Input
+                  id="rate"
+                  type="number"
+                  value={formData.hourlyRate}
+                  onChange={(e) => setFormData({ ...formData, hourlyRate: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Betalingstermijn</Label>
+                <Select
+                  value={formData.paymentTerm}
+                  onValueChange={(value) => setFormData({ ...formData, paymentTerm: value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="PREPAID">Vooraf</SelectItem>
+                    <SelectItem value="POSTPAID">Achteraf</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
             <div className="space-y-2">
               <Label htmlFor="notes">Notities</Label>
@@ -516,14 +547,31 @@ export default function ClientsPage() {
                 </Select>
               </div>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-rate">Uurtarief (€)</Label>
-              <Input
-                id="edit-rate"
-                type="number"
-                value={formData.hourlyRate}
-                onChange={(e) => setFormData({ ...formData, hourlyRate: e.target.value })}
-              />
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="edit-rate">Uurtarief (€)</Label>
+                <Input
+                  id="edit-rate"
+                  type="number"
+                  value={formData.hourlyRate}
+                  onChange={(e) => setFormData({ ...formData, hourlyRate: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Betalingstermijn</Label>
+                <Select
+                  value={formData.paymentTerm}
+                  onValueChange={(value) => setFormData({ ...formData, paymentTerm: value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="PREPAID">Vooraf</SelectItem>
+                    <SelectItem value="POSTPAID">Achteraf</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
           </div>
           <DialogFooter>
@@ -537,14 +585,11 @@ export default function ClientsPage() {
 
       {/* Add Budget Dialog */}
       <Dialog open={isBudgetDialogOpen} onOpenChange={setIsBudgetDialogOpen}>
-        <DialogContent>
+        <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>Budget toevoegen - {selectedClient?.name}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-4">
-            <p className="text-sm text-muted-foreground">
-              Budget voor {getDutchMonth(selectedMonth)} {selectedYear}
-            </p>
             <div className="space-y-2">
               <Label>Budget type</Label>
               <Select
@@ -564,8 +609,60 @@ export default function ClientsPage() {
                 </SelectContent>
               </Select>
             </div>
+
+            {/* Period Selection */}
+            <div className="space-y-3 p-3 bg-gray-50 rounded-lg">
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="useEndMonth"
+                  checked={budgetForm.useEndMonth}
+                  onChange={(e) => setBudgetForm({ ...budgetForm, useEndMonth: e.target.checked })}
+                  className="h-4 w-4 rounded border-gray-300"
+                />
+                <Label htmlFor="useEndMonth" className="font-normal cursor-pointer">
+                  Budget voor meerdere maanden
+                </Label>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">Startmaand</Label>
+                  <div className="text-sm font-medium">
+                    {getDutchMonth(selectedMonth)} {selectedYear}
+                  </div>
+                </div>
+                {budgetForm.useEndMonth && (
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">Eindmaand</Label>
+                    <Select
+                      value={budgetForm.endMonth}
+                      onValueChange={(value) => setBudgetForm({ ...budgetForm, endMonth: value })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((m) => (
+                          <SelectItem key={m} value={m.toString()}>
+                            {getDutchMonth(m)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+              </div>
+
+              {budgetForm.useEndMonth && (
+                <p className="text-xs text-muted-foreground">
+                  Budget wordt aangemaakt van {getDutchMonth(selectedMonth)} t/m {getDutchMonth(parseInt(budgetForm.endMonth))} {selectedYear}
+                </p>
+              )}
+            </div>
+
             <div className="space-y-2">
-              <Label htmlFor="budget">Budget (€)</Label>
+              <Label htmlFor="budget">Budget per maand (€)</Label>
               <Input
                 id="budget"
                 type="number"
@@ -576,7 +673,7 @@ export default function ClientsPage() {
             </div>
             {budgetForm.budgetType === "PROSPECT" && (
               <div className="space-y-2">
-                <Label htmlFor="probability">Kans (%)</Label>
+                <Label htmlFor="probability">Kans (0-1)</Label>
                 <Input
                   id="probability"
                   type="number"
@@ -593,7 +690,9 @@ export default function ClientsPage() {
             <Button variant="outline" onClick={() => setIsBudgetDialogOpen(false)}>
               Annuleren
             </Button>
-            <Button onClick={handleAddBudget}>Toevoegen</Button>
+            <Button onClick={handleAddBudget}>
+              {budgetForm.useEndMonth ? `Toevoegen (${parseInt(budgetForm.endMonth) - selectedMonth + 1} maanden)` : 'Toevoegen'}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

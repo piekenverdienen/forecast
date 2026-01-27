@@ -10,6 +10,7 @@ const createClientSchema = z.object({
   clientType: z.enum(["B2B", "B2C"]).default("B2B"),
   classification: z.enum(["A", "B", "C", "D"]).default("C"),
   hourlyRate: z.number().min(0),
+  paymentTerm: z.enum(["PREPAID", "POSTPAID"]).default("POSTPAID"),
   contractStart: z
     .string()
     .optional()
@@ -104,6 +105,7 @@ export async function POST(request: NextRequest) {
         clientType: validatedData.clientType,
         classification: validatedData.classification,
         hourlyRate: validatedData.hourlyRate,
+        paymentTerm: validatedData.paymentTerm,
         contractStart: validatedData.contractStart,
         contractEnd: validatedData.contractEnd,
         notes: validatedData.notes,

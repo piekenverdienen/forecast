@@ -78,12 +78,14 @@ model Client {
   hourlyRate      Float
   contractStart   DateTime?
   contractEnd     DateTime?
+  paymentTerm     String         @default("POSTPAID") // PREPAID, POSTPAID
   isActive        Boolean        @default(true)
   notes           String?
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
 
   budgets         ClientBudget[]
+  invoices        Invoice[]
 }
 
 // Client Budget model (per month)
@@ -139,4 +141,65 @@ model SalesTarget {
   updatedAt      DateTime @updatedAt
 
   @@unique([year, month])
+}
+
+// Invoice model for tracking billing
+model Invoice {
+  id                String    @id @default(uuid())
+  clientId          String
+  client            Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  clientBudgetId    String?
+  year              Int
+  month             Int       // The month this invoice is FOR
+  invoiceNumber     String?
+  amount            Float
+  invoiceDate       DateTime?
+  dueDate           DateTime?
+  status            String    @default("PENDING") // PENDING, INVOICED, PAID, OVERDUE
+  paymentTerm       String    @default("POSTPAID") // PREPAID, POSTPAID - copied from client at creation
+  notes             String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@unique([clientId, year, month, clientBudgetId])
+}
+
+// Role model with default billable targets
+model Role {
+  id              String   @id @default(uuid())
+  name            String   @unique
+  description     String?
+  billableTarget  Float    @default(0.80) // Default billable percentage for this role
+  isDefault       Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+// Settings model for application configuration
+model Settings {
+  id              String   @id @default(uuid())
+  key             String   @unique
+  value           String
+  description     String?
+  category        String   @default("GENERAL") // GENERAL, CAPACITY, INVOICING, NOTIFICATIONS
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+// Capacity Suggestion model for storing AI-generated suggestions
+model CapacitySuggestion {
+  id              String    @id @default(uuid())
+  year            Int
+  month           Int
+  employeeId      String
+  suggestionType  String    // REASSIGNMENT, OVERLOAD, UNDERLOAD, VACATION_COVER
+  title           String
+  description     String
+  suggestedAction String    // JSON with suggested changes
+  priority        String    @default("MEDIUM") // LOW, MEDIUM, HIGH
+  status          String    @default("PENDING") // PENDING, APPLIED, DISMISSED
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([year, month])
 }

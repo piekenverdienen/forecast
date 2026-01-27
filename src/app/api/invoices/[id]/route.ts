@@ -4,28 +4,16 @@ import { authOptions, canManageClients } from "@/lib/auth"
 import { prisma } from "@/lib/prisma"
 import { z } from "zod"
 
-const updateClientSchema = z.object({
-  name: z.string().min(1).optional(),
-  timechimpId: z.string().optional().nullable(),
-  clientType: z.enum(["B2B", "B2C"]).optional(),
-  classification: z.enum(["A", "B", "C", "D"]).optional(),
-  hourlyRate: z.number().min(0).optional(),
-  paymentTerm: z.enum(["PREPAID", "POSTPAID"]).optional(),
-  contractStart: z
-    .string()
-    .optional()
-    .nullable()
-    .transform((str) => (str ? new Date(str) : null)),
-  contractEnd: z
-    .string()
-    .optional()
-    .nullable()
-    .transform((str) => (str ? new Date(str) : null)),
+const updateInvoiceSchema = z.object({
+  invoiceNumber: z.string().optional().nullable(),
+  amount: z.number().min(0).optional(),
+  invoiceDate: z.string().optional().nullable().transform((str) => (str ? new Date(str) : null)),
+  dueDate: z.string().optional().nullable().transform((str) => (str ? new Date(str) : null)),
+  status: z.enum(["PENDING", "INVOICED", "PAID", "OVERDUE"]).optional(),
   notes: z.string().optional().nullable(),
-  isActive: z.boolean().optional(),
 })
 
-// GET /api/clients/[id] - Get single client
+// GET /api/invoices/[id] - Get single invoice
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -38,40 +26,37 @@ export async function GET(
 
     const { id } = await params
 
-    const client = await prisma.client.findUnique({
+    const invoice = await prisma.invoice.findUnique({
       where: { id },
       include: {
-        budgets: {
-          orderBy: [{ year: "desc" }, { month: "desc" }],
-          include: {
-            forecastEntries: {
-              include: {
-                employee: true,
-              },
-            },
+        client: {
+          select: {
+            id: true,
+            name: true,
+            paymentTerm: true,
           },
         },
       },
     })
 
-    if (!client) {
+    if (!invoice) {
       return NextResponse.json(
-        { error: "Klant niet gevonden" },
+        { error: "Factuur niet gevonden" },
         { status: 404 }
       )
     }
 
-    return NextResponse.json(client)
+    return NextResponse.json(invoice)
   } catch (error) {
-    console.error("Error fetching client:", error)
+    console.error("Error fetching invoice:", error)
     return NextResponse.json(
-      { error: "Failed to fetch client" },
+      { error: "Failed to fetch invoice" },
       { status: 500 }
     )
   }
 }
 
-// PUT /api/clients/[id] - Update client
+// PUT /api/invoices/[id] - Update invoice
 export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -84,27 +69,36 @@ export async function PUT(
 
     const { id } = await params
     const body = await request.json()
-    const validatedData = updateClientSchema.parse(body)
+    const validatedData = updateInvoiceSchema.parse(body)
 
-    const client = await prisma.client.update({
+    const invoice = await prisma.invoice.update({
       where: { id },
       data: validatedData,
+      include: {
+        client: {
+          select: {
+            id: true,
+            name: true,
+            paymentTerm: true,
+          },
+        },
+      },
     })
 
-    return NextResponse.json(client)
+    return NextResponse.json(invoice)
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json({ error: error.errors }, { status: 400 })
     }
-    console.error("Error updating client:", error)
+    console.error("Error updating invoice:", error)
     return NextResponse.json(
-      { error: "Failed to update client" },
+      { error: "Failed to update invoice" },
       { status: 500 }
     )
   }
 }
 
-// DELETE /api/clients/[id] - Archive client (soft delete)
+// DELETE /api/invoices/[id] - Delete invoice
 export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -117,16 +111,15 @@ export async function DELETE(
 
     const { id } = await params
 
-    const client = await prisma.client.update({
+    await prisma.invoice.delete({
       where: { id },
-      data: { isActive: false },
     })
 
-    return NextResponse.json(client)
+    return NextResponse.json({ success: true })
   } catch (error) {
-    console.error("Error archiving client:", error)
+    console.error("Error deleting invoice:", error)
     return NextResponse.json(
-      { error: "Failed to archive client" },
+      { error: "Failed to delete invoice" },
       { status: 500 }
     )
   }

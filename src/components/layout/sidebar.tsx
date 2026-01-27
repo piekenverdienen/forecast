@@ -14,6 +14,8 @@ import {
   LogOut,
   ChevronLeft,
   ChevronRight,
+  Receipt,
+  Calendar,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useState } from "react"
@@ -35,6 +37,8 @@ const navigation = [
   { name: "Forecast", href: "/forecast", icon: CalendarDays },
   { name: "Medewerkers", href: "/employees", icon: Users },
   { name: "Klanten", href: "/clients", icon: Building2 },
+  { name: "Facturatie", href: "/invoicing", icon: Receipt },
+  { name: "Jaaroverzicht", href: "/yearly", icon: Calendar },
   { name: "Sales", href: "/sales", icon: BarChart3 },
   { name: "Risico's", href: "/risk", icon: AlertTriangle },
 ]

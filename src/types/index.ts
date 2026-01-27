@@ -198,6 +198,113 @@ export interface PublicHoliday {
   year: number
 }
 
+// Payment terms
+export type PaymentTerm = 'PREPAID' | 'POSTPAID'
+
+// Invoice status
+export type InvoiceStatus = 'PENDING' | 'INVOICED' | 'PAID' | 'OVERDUE'
+
+// Invoice
+export interface Invoice {
+  id: string
+  clientId: string
+  clientBudgetId: string | null
+  year: number
+  month: number
+  invoiceNumber: string | null
+  amount: number
+  invoiceDate: Date | null
+  dueDate: Date | null
+  status: InvoiceStatus
+  paymentTerm: PaymentTerm
+  notes: string | null
+  createdAt: Date
+  updatedAt: Date
+  client?: {
+    id: string
+    name: string
+    paymentTerm: PaymentTerm
+  }
+}
+
+// Role with billable target
+export interface Role {
+  id: string
+  name: string
+  description: string | null
+  billableTarget: number
+  isDefault: boolean
+  createdAt: Date
+  updatedAt: Date
+}
+
+// Settings
+export interface Setting {
+  id: string
+  key: string
+  value: string
+  description: string | null
+  category: 'GENERAL' | 'CAPACITY' | 'INVOICING' | 'NOTIFICATIONS'
+  createdAt: Date
+  updatedAt: Date
+}
+
+// Capacity Suggestion types
+export type SuggestionType = 'REASSIGNMENT' | 'OVERLOAD' | 'UNDERLOAD' | 'VACATION_COVER'
+export type SuggestionPriority = 'LOW' | 'MEDIUM' | 'HIGH'
+export type SuggestionStatus = 'PENDING' | 'APPLIED' | 'DISMISSED'
+
+export interface CapacitySuggestion {
+  id: string
+  year: number
+  month: number
+  employeeId: string
+  suggestionType: SuggestionType
+  title: string
+  description: string
+  suggestedAction: string // JSON
+  priority: SuggestionPriority
+  status: SuggestionStatus
+  createdAt: Date
+  updatedAt: Date
+}
+
+// Yearly overview types
+export interface YearlyClientOverview {
+  client: {
+    id: string
+    name: string
+    classification: ClientClassification
+    paymentTerm: PaymentTerm
+  }
+  months: {
+    month: number
+    budget: number
+    invoiced: number
+    status: InvoiceStatus
+  }[]
+  totalBudget: number
+  totalInvoiced: number
+}
+
+export interface YearlyEmployeeOverview {
+  employee: {
+    id: string
+    name: string
+    email: string
+  }
+  months: {
+    month: number
+    maxHours: number
+    plannedHours: number
+    leaveHours: number
+    occupationRate: number
+    status: OccupationStatus
+  }[]
+  averageOccupation: number
+  totalLeaveHours: number
+}
+
 // API Response types
 export interface ApiResponse<T> {
   data?: T
