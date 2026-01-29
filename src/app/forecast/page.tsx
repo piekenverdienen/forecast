@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import React, { useEffect, useState } from "react"
 import { useMonth } from "@/components/layout/month-context"
 import { Header } from "@/components/layout/header"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -77,6 +77,7 @@ interface ClientForecast {
     id: string
     name: string
     hourlyRate: number
+    clientType?: string
     subscriptionAmount?: number
     subscriptionStartDate?: string
   }
@@ -96,28 +97,6 @@ interface ForecastData {
   }
 }
 
-interface YearlyForecastData {
-  year: number
-  months: {
-    month: number
-    clients: ClientForecast[]
-    summary: {
-      totalBudget: number
-      totalAllocated: number
-      totalProspect: number
-      totalSubscription: number
-      clientCount: number
-    }
-  }[]
-  yearlySummary: {
-    totalBudget: number
-    totalAllocated: number
-    totalUnallocated: number
-    totalProspect: number
-    totalSubscription: number
-  }
-}
-
 interface Employee {
   id: string
   name: string
@@ -132,23 +111,73 @@ interface UnallocatedBudget {
   unallocatedAmount: number
 }
 
+// Yearly data structures
+interface ClientYearlyBudgetType {
+  [budgetType: string]: number[]  // 12 months
+}
+
+interface ClientYearlyData {
+  clientId: string
+  clientName: string
+  clientType: string
+  hourlyRate: number
+  subscriptionAmount?: number
+  budgetsByType: ClientYearlyBudgetType
+  totals: { [budgetType: string]: number }
+  grandTotal: number
+}
+
+interface YearlyOverview {
+  clients: ClientYearlyData[]
+  monthlyTotals: { [budgetType: string]: number[] }
+  yearlyTotals: { [budgetType: string]: number }
+  grandTotal: number
+  unallocatedBudgets: UnallocatedBudget[]
+}
+
 const DUTCH_MONTHS_SHORT = [
   "Jan", "Feb", "Mrt", "Apr", "Mei", "Jun",
   "Jul", "Aug", "Sep", "Okt", "Nov", "Dec"
 ]
 
+const BUDGET_TYPES = [
+  "SUBSCRIPTION",
+  "PROJECT",
+  "PROSPECT",
+  "NACALCULATIE",
+  "TOOLING",
+  "INHUUR"
+]
+
+const BUDGET_TYPE_LABELS: Record<string, string> = {
+  SUBSCRIPTION: "Abonnement",
+  PROJECT: "Project",
+  PROSPECT: "Prospect",
+  TOOLING: "Tooling",
+  NACALCULATIE: "Nacalculatie",
+  INHUUR: "Inhuur",
+}
+
+const BUDGET_TYPE_COLORS: Record<string, string> = {
+  SUBSCRIPTION: "bg-green-100 text-green-800",
+  PROJECT: "bg-blue-100 text-blue-800",
+  PROSPECT: "bg-amber-100 text-amber-800",
+  TOOLING: "bg-purple-100 text-purple-800",
+  NACALCULATIE: "bg-gray-100 text-gray-800",
+  INHUUR: "bg-pink-100 text-pink-800",
+}
+
 export default function ForecastPage() {
   const { selectedMonth, selectedYear, setSelectedMonth, setSelectedYear } = useMonth()
   const [viewMode, setViewMode] = useState<ViewMode>("month")
   const [data, setData] = useState<ForecastData | null>(null)
-  const [yearlyData, setYearlyData] = useState<YearlyForecastData | null>(null)
+  const [yearlyOverview, setYearlyOverview] = useState<YearlyOverview | null>(null)
   const [employees, setEmployees] = useState<Employee[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [expandedClients, setExpandedClients] = useState<Set<string>>(new Set())
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false)
   const [selectedBudget, setSelectedBudget] = useState<ClientBudget | null>(null)
   const [selectedClientName, setSelectedClientName] = useState("")
-  const [unallocatedBudgets, setUnallocatedBudgets] = useState<UnallocatedBudget[]>([])
 
   // Form state
   const [newEntry, setNewEntry] = useState({
@@ -180,114 +209,94 @@ export default function ForecastPage() {
 
   const fetchYearlyData = async () => {
     try {
-      const [yearlyRes, employeesRes, clientsRes] = await Promise.all([
-        fetch(`/api/forecast/yearly?year=${selectedYear}`),
-        fetch("/api/employees"),
+      // Fetch all 12 months in parallel
+      const monthPromises = Array.from({ length: 12 }, (_, i) =>
+        fetch(`/api/forecast?year=${selectedYear}&month=${i + 1}`)
+      )
+
+      const [clientsRes, employeesRes, ...monthResponses] = await Promise.all([
         fetch("/api/clients"),
+        fetch("/api/employees"),
+        ...monthPromises,
       ])
 
-      if (yearlyRes.ok) {
-        const yearlyForecastData = await yearlyRes.json()
-
-        // Process subscription data from clients
-        if (clientsRes.ok) {
-          const clientsData = await clientsRes.json()
-
-          // Enrich yearly data with subscription calculations
-          const enrichedData = enrichWithSubscriptions(yearlyForecastData, clientsData)
-          setYearlyData(enrichedData)
-
-          // Calculate unallocated budgets
-          const unallocated = calculateUnallocatedBudgets(enrichedData)
-          setUnallocatedBudgets(unallocated)
-        } else {
-          setYearlyData(yearlyForecastData)
+      const monthlyData: ForecastData[] = []
+      for (const res of monthResponses) {
+        if (res.ok) {
+          monthlyData.push(await res.json())
         }
+      }
+
+      let clientsData: any[] = []
+      if (clientsRes.ok) {
+        clientsData = await clientsRes.json()
       }
 
       if (employeesRes.ok) {
         const employeesData = await employeesRes.json()
         setEmployees(employeesData)
       }
+
+      // Process into yearly overview
+      const overview = processYearlyData(monthlyData, clientsData, selectedYear)
+      setYearlyOverview(overview)
     } catch (error) {
       console.error("Failed to fetch yearly data:", error)
     }
   }
 
-  const enrichWithSubscriptions = (yearlyData: YearlyForecastData, clients: any[]): YearlyForecastData => {
-    const enrichedMonths = yearlyData.months.map((monthData) => {
-      let totalSubscription = 0
-      let totalProspect = 0
+  const processYearlyData = (
+    monthlyData: ForecastData[],
+    clientsData: any[],
+    year: number
+  ): YearlyOverview => {
+    const clientMap = new Map<string, ClientYearlyData>()
+    const unallocatedBudgets: UnallocatedBudget[] = []
 
-      const enrichedClients = monthData.clients.map((clientForecast) => {
-        const clientInfo = clients.find((c: any) => c.id === clientForecast.client.id)
-
-        if (clientInfo?.subscriptionAmount && clientInfo?.subscriptionStartDate) {
-          const startDate = new Date(clientInfo.subscriptionStartDate)
-          const startMonth = startDate.getMonth() + 1
-          const startYear = startDate.getFullYear()
-
-          // Check if subscription is active for this month
-          if (startYear < yearlyData.year ||
-              (startYear === yearlyData.year && startMonth <= monthData.month)) {
-            totalSubscription += clientInfo.subscriptionAmount
-          }
-        }
-
-        // Calculate prospect revenue
-        clientForecast.budgets.forEach((budget) => {
-          if (budget.budgetType === "PROSPECT" && budget.prospectProbability) {
-            totalProspect += budget.totalBudget * budget.prospectProbability
-          }
-        })
-
-        return {
-          ...clientForecast,
-          client: {
-            ...clientForecast.client,
-            subscriptionAmount: clientInfo?.subscriptionAmount,
-            subscriptionStartDate: clientInfo?.subscriptionStartDate,
-          },
-        }
-      })
-
-      return {
-        ...monthData,
-        clients: enrichedClients,
-        summary: {
-          ...monthData.summary,
-          totalSubscription,
-          totalProspect,
-        },
-      }
+    // Initialize monthly totals
+    const monthlyTotals: { [budgetType: string]: number[] } = {}
+    BUDGET_TYPES.forEach((type) => {
+      monthlyTotals[type] = new Array(12).fill(0)
     })
 
-    const yearlySummary = enrichedMonths.reduce(
-      (acc, month) => ({
-        totalBudget: acc.totalBudget + month.summary.totalBudget,
-        totalAllocated: acc.totalAllocated + month.summary.totalAllocated,
-        totalUnallocated: acc.totalUnallocated + (month.summary.totalBudget - month.summary.totalAllocated),
-        totalProspect: acc.totalProspect + month.summary.totalProspect,
-        totalSubscription: acc.totalSubscription + month.summary.totalSubscription,
-      }),
-      { totalBudget: 0, totalAllocated: 0, totalUnallocated: 0, totalProspect: 0, totalSubscription: 0 }
-    )
+    // Process each month's data
+    monthlyData.forEach((monthData) => {
+      const monthIndex = monthData.month - 1
 
-    return {
-      ...yearlyData,
-      months: enrichedMonths,
-      yearlySummary,
-    }
-  }
-
-  const calculateUnallocatedBudgets = (yearlyData: YearlyForecastData): UnallocatedBudget[] => {
-    const unallocated: UnallocatedBudget[] = []
-
-    yearlyData.months.forEach((monthData) => {
       monthData.clients.forEach((clientForecast) => {
+        const clientInfo = clientsData.find((c) => c.id === clientForecast.client.id)
+
+        if (!clientMap.has(clientForecast.client.id)) {
+          const budgetsByType: ClientYearlyBudgetType = {}
+          BUDGET_TYPES.forEach((type) => {
+            budgetsByType[type] = new Array(12).fill(0)
+          })
+
+          clientMap.set(clientForecast.client.id, {
+            clientId: clientForecast.client.id,
+            clientName: clientForecast.client.name,
+            clientType: clientInfo?.clientType || "-",
+            hourlyRate: clientForecast.client.hourlyRate,
+            subscriptionAmount: clientInfo?.subscriptionAmount,
+            budgetsByType,
+            totals: {},
+            grandTotal: 0,
+          })
+        }
+
+        const clientData = clientMap.get(clientForecast.client.id)!
+
+        // Process budgets
         clientForecast.budgets.forEach((budget) => {
+          const budgetType = budget.budgetType
+          if (clientData.budgetsByType[budgetType]) {
+            clientData.budgetsByType[budgetType][monthIndex] += budget.totalBudget
+            monthlyTotals[budgetType][monthIndex] += budget.totalBudget
+          }
+
+          // Track unallocated
           if (budget.unallocatedAmount > 100) {
-            unallocated.push({
+            unallocatedBudgets.push({
               clientId: clientForecast.client.id,
               clientName: clientForecast.client.name,
               budgetId: budget.id,
@@ -297,10 +306,58 @@ export default function ForecastPage() {
             })
           }
         })
+
+        // Handle subscription propagation for future months
+        if (clientInfo?.subscriptionAmount && clientInfo?.subscriptionStartDate) {
+          const startDate = new Date(clientInfo.subscriptionStartDate)
+          const startMonth = startDate.getMonth()
+          const startYear = startDate.getFullYear()
+
+          // If subscription started before or in this year
+          if (startYear <= year) {
+            const effectiveStartMonth = startYear < year ? 0 : startMonth
+
+            for (let m = effectiveStartMonth; m < 12; m++) {
+              // Only add if no budget entry exists for this month
+              const existingBudget = clientData.budgetsByType["SUBSCRIPTION"][m]
+              if (existingBudget === 0) {
+                clientData.budgetsByType["SUBSCRIPTION"][m] = clientInfo.subscriptionAmount
+                monthlyTotals["SUBSCRIPTION"][m] += clientInfo.subscriptionAmount
+              }
+            }
+          }
+        }
       })
     })
 
-    return unallocated.sort((a, b) => b.unallocatedAmount - a.unallocatedAmount)
+    // Calculate totals per client
+    clientMap.forEach((clientData) => {
+      BUDGET_TYPES.forEach((type) => {
+        clientData.totals[type] = clientData.budgetsByType[type].reduce((a, b) => a + b, 0)
+        clientData.grandTotal += clientData.totals[type]
+      })
+    })
+
+    // Calculate yearly totals
+    const yearlyTotals: { [budgetType: string]: number } = {}
+    let grandTotal = 0
+    BUDGET_TYPES.forEach((type) => {
+      yearlyTotals[type] = monthlyTotals[type].reduce((a, b) => a + b, 0)
+      grandTotal += yearlyTotals[type]
+    })
+
+    // Sort clients by grand total descending
+    const sortedClients = Array.from(clientMap.values()).sort(
+      (a, b) => b.grandTotal - a.grandTotal
+    )
+
+    return {
+      clients: sortedClients,
+      monthlyTotals,
+      yearlyTotals,
+      grandTotal,
+      unallocatedBudgets: unallocatedBudgets.sort((a, b) => b.unallocatedAmount - a.unallocatedAmount),
+    }
   }
 
   const fetchData = async () => {
@@ -404,25 +461,36 @@ export default function ForecastPage() {
   }
 
   const getChartData = () => {
-    if (!yearlyData) return []
+    if (!yearlyOverview) return []
 
-    return yearlyData.months.map((monthData) => ({
-      name: DUTCH_MONTHS_SHORT[monthData.month - 1],
-      month: monthData.month,
-      omzet: monthData.summary.totalBudget - monthData.summary.totalProspect,
-      prospect: monthData.summary.totalProspect,
-      abonnement: monthData.summary.totalSubscription,
-    }))
-  }
+    return DUTCH_MONTHS_SHORT.map((name, index) => {
+      const subscription = yearlyOverview.monthlyTotals["SUBSCRIPTION"]?.[index] || 0
+      const project = yearlyOverview.monthlyTotals["PROJECT"]?.[index] || 0
+      const prospect = yearlyOverview.monthlyTotals["PROSPECT"]?.[index] || 0
+      const other =
+        (yearlyOverview.monthlyTotals["NACALCULATIE"]?.[index] || 0) +
+        (yearlyOverview.monthlyTotals["TOOLING"]?.[index] || 0) +
+        (yearlyOverview.monthlyTotals["INHUUR"]?.[index] || 0)
 
-  const getTotalUnallocated = () => {
-    return unallocatedBudgets.reduce((sum, item) => sum + item.unallocatedAmount, 0)
+      return {
+        name,
+        month: index + 1,
+        abonnement: subscription,
+        project: project,
+        prospect: prospect,
+        overig: other,
+        totaal: subscription + project + prospect + other,
+      }
+    })
   }
 
   const renderUnallocatedAlert = () => {
-    if (unallocatedBudgets.length === 0) return null
+    if (!yearlyOverview || yearlyOverview.unallocatedBudgets.length === 0) return null
 
-    const totalUnallocated = getTotalUnallocated()
+    const totalUnallocated = yearlyOverview.unallocatedBudgets.reduce(
+      (sum, item) => sum + item.unallocatedAmount,
+      0
+    )
 
     return (
       <div className="mb-6">
@@ -436,7 +504,7 @@ export default function ForecastPage() {
                     Onverdeeld budget: {formatCurrency(totalUnallocated)}
                   </div>
                   <div className="text-sm text-amber-600">
-                    {unallocatedBudgets.length} budget{unallocatedBudgets.length !== 1 ? "ten" : ""} nog niet volledig toegewezen. Klik voor details.
+                    {yearlyOverview.unallocatedBudgets.length} budget{yearlyOverview.unallocatedBudgets.length !== 1 ? "ten" : ""} nog niet volledig toegewezen. Klik voor details.
                   </div>
                 </div>
                 <ChevronDown className="h-5 w-5 text-amber-600" />
@@ -444,7 +512,7 @@ export default function ForecastPage() {
             </div>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="w-96 max-h-80 overflow-y-auto">
-            {unallocatedBudgets.map((item, index) => (
+            {yearlyOverview.unallocatedBudgets.map((item, index) => (
               <DropdownMenuItem
                 key={`${item.budgetId}-${index}`}
                 className="flex justify-between items-center py-3"
@@ -458,7 +526,7 @@ export default function ForecastPage() {
                 <div>
                   <div className="font-medium">{item.clientName}</div>
                   <div className="text-sm text-muted-foreground">
-                    {getDutchMonth(item.month)} - {getBudgetTypeLabel(item.budgetType)}
+                    {getDutchMonth(item.month)} - {BUDGET_TYPE_LABELS[item.budgetType] || item.budgetType}
                   </div>
                 </div>
                 <Badge variant="danger">{formatCurrency(item.unallocatedAmount)}</Badge>
@@ -468,18 +536,6 @@ export default function ForecastPage() {
         </DropdownMenu>
       </div>
     )
-  }
-
-  const getBudgetTypeLabel = (type: string): string => {
-    const labels: Record<string, string> = {
-      SUBSCRIPTION: "Abonnement",
-      PROJECT: "Project",
-      PROSPECT: "Prospect",
-      TOOLING: "Tooling",
-      NACALCULATIE: "Nacalculatie",
-      INHUUR: "Inhuur",
-    }
-    return labels[type] || type
   }
 
   const renderYearlyChart = () => {
@@ -496,9 +552,7 @@ export default function ForecastPage() {
               <LineChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="name" />
-                <YAxis
-                  tickFormatter={(value) => `€${(value / 1000).toFixed(0)}k`}
-                />
+                <YAxis tickFormatter={(value) => `€${(value / 1000).toFixed(0)}k`} />
                 <Tooltip
                   formatter={(value: number) => formatCurrency(value)}
                   labelFormatter={(label) => `Maand: ${label}`}
@@ -506,16 +560,24 @@ export default function ForecastPage() {
                 <Legend />
                 <Line
                   type="monotone"
-                  dataKey="omzet"
-                  name="Vaste omzet"
-                  stroke="#1a365d"
+                  dataKey="abonnement"
+                  name="Abonnement"
+                  stroke="#10b981"
                   strokeWidth={2}
-                  dot={{ fill: "#1a365d" }}
+                  dot={{ fill: "#10b981" }}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="project"
+                  name="Project"
+                  stroke="#3b82f6"
+                  strokeWidth={2}
+                  dot={{ fill: "#3b82f6" }}
                 />
                 <Line
                   type="monotone"
                   dataKey="prospect"
-                  name="Prospect omzet"
+                  name="Prospect"
                   stroke="#f59e0b"
                   strokeWidth={2}
                   strokeDasharray="5 5"
@@ -523,11 +585,11 @@ export default function ForecastPage() {
                 />
                 <Line
                   type="monotone"
-                  dataKey="abonnement"
-                  name="Abonnementen"
-                  stroke="#10b981"
-                  strokeWidth={2}
-                  dot={{ fill: "#10b981" }}
+                  dataKey="totaal"
+                  name="Totaal"
+                  stroke="#1a365d"
+                  strokeWidth={3}
+                  dot={{ fill: "#1a365d" }}
                 />
               </LineChart>
             </ResponsiveContainer>
@@ -538,153 +600,193 @@ export default function ForecastPage() {
   }
 
   const renderYearlySummary = () => {
-    if (!yearlyData) return null
+    if (!yearlyOverview) return null
 
     return (
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4 mb-6">
         <Card>
           <CardContent className="pt-6">
-            <div className="text-2xl font-bold">{formatCurrency(yearlyData.yearlySummary.totalBudget)}</div>
-            <p className="text-sm text-muted-foreground">Totaal budget jaar</p>
+            <div className="text-2xl font-bold">{formatCurrency(yearlyOverview.grandTotal)}</div>
+            <p className="text-sm text-muted-foreground">Totaal jaar</p>
           </CardContent>
         </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-2xl font-bold text-green-600">
-              {formatCurrency(yearlyData.yearlySummary.totalSubscription)}
-            </div>
-            <p className="text-sm text-muted-foreground">Abonnementen</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-2xl font-bold text-amber-600">
-              {formatCurrency(yearlyData.yearlySummary.totalProspect)}
-            </div>
-            <p className="text-sm text-muted-foreground">Prospect (gewogen)</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-2xl font-bold">{formatCurrency(yearlyData.yearlySummary.totalAllocated)}</div>
-            <p className="text-sm text-muted-foreground">Toegewezen</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className={cn(
-              "text-2xl font-bold",
-              yearlyData.yearlySummary.totalUnallocated > 0 ? "text-red-600" : "text-green-600"
-            )}>
-              {formatCurrency(yearlyData.yearlySummary.totalUnallocated)}
-            </div>
-            <p className="text-sm text-muted-foreground">Onverdeeld</p>
-          </CardContent>
-        </Card>
+        {BUDGET_TYPES.map((type) => (
+          <Card key={type}>
+            <CardContent className="pt-6">
+              <div className={cn("text-xl font-bold", {
+                "text-green-600": type === "SUBSCRIPTION",
+                "text-blue-600": type === "PROJECT",
+                "text-amber-600": type === "PROSPECT",
+              })}>
+                {formatCurrency(yearlyOverview.yearlyTotals[type] || 0)}
+              </div>
+              <p className="text-sm text-muted-foreground">{BUDGET_TYPE_LABELS[type]}</p>
+            </CardContent>
+          </Card>
+        ))}
       </div>
     )
   }
 
   const renderYearlyClientTable = () => {
-    if (!yearlyData) return null
+    if (!yearlyOverview) return null
 
-    // Aggregate client data across all months
-    const clientYearlyData = new Map<string, {
-      client: ClientForecast["client"]
-      monthlyBudgets: number[]
-      totalBudget: number
-      totalAllocated: number
-    }>()
-
-    yearlyData.months.forEach((monthData) => {
-      monthData.clients.forEach((clientForecast) => {
-        const existing = clientYearlyData.get(clientForecast.client.id)
-        if (existing) {
-          existing.monthlyBudgets[monthData.month - 1] = clientForecast.totalBudget
-          existing.totalBudget += clientForecast.totalBudget
-          existing.totalAllocated += clientForecast.totalAllocated
-        } else {
-          const monthlyBudgets = new Array(12).fill(0)
-          monthlyBudgets[monthData.month - 1] = clientForecast.totalBudget
-          clientYearlyData.set(clientForecast.client.id, {
-            client: clientForecast.client,
-            monthlyBudgets,
-            totalBudget: clientForecast.totalBudget,
-            totalAllocated: clientForecast.totalAllocated,
-          })
-        }
-      })
-    })
-
-    const sortedClients = Array.from(clientYearlyData.values()).sort(
-      (a, b) => b.totalBudget - a.totalBudget
+    // Get all budget types that have any data
+    const activeBudgetTypes = BUDGET_TYPES.filter(
+      (type) => yearlyOverview.yearlyTotals[type] > 0
     )
 
     return (
       <Card>
         <CardHeader>
-          <CardTitle>Klanten jaaroverzicht</CardTitle>
+          <CardTitle>Klanten jaaroverzicht {selectedYear}</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full text-sm border-collapse">
               <thead>
-                <tr className="border-b">
-                  <th className="text-left py-2 px-2 font-medium">Klant</th>
+                <tr className="border-b-2 border-gray-300">
+                  <th className="text-left py-3 px-2 font-semibold sticky left-0 bg-white">Klant</th>
+                  <th className="text-center py-3 px-2 font-semibold w-12">Type</th>
                   {DUTCH_MONTHS_SHORT.map((month) => (
-                    <th key={month} className="text-right py-2 px-2 font-medium w-20">
+                    <th key={month} className="text-right py-3 px-2 font-semibold min-w-[80px]">
                       {month}
                     </th>
                   ))}
-                  <th className="text-right py-2 px-2 font-medium w-24">Totaal</th>
+                  <th className="text-right py-3 px-2 font-semibold min-w-[100px] bg-gray-50">Totaal</th>
                 </tr>
               </thead>
               <tbody>
-                {sortedClients.map((clientData) => (
-                  <tr
-                    key={clientData.client.id}
-                    className="border-b hover:bg-gray-50 cursor-pointer"
-                    onClick={() => {
-                      setViewMode("month")
-                      const clientSet = new Set([clientData.client.id])
-                      setExpandedClients(clientSet)
-                    }}
-                  >
-                    <td className="py-2 px-2">
-                      <div className="font-medium">{clientData.client.name}</div>
-                      {clientData.client.subscriptionAmount && (
-                        <div className="text-xs text-green-600">
-                          Abo: {formatCurrency(clientData.client.subscriptionAmount)}/mnd
-                        </div>
-                      )}
+                {yearlyOverview.clients.map((clientData, clientIndex) => {
+                  // Get budget types with data for this client
+                  const clientBudgetTypes = BUDGET_TYPES.filter(
+                    (type) => clientData.totals[type] > 0
+                  )
+
+                  if (clientBudgetTypes.length === 0) return null
+
+                  return (
+                    <React.Fragment key={clientData.clientId}>
+                      {/* Client header row */}
+                      <tr className={cn(
+                        "border-t-2 border-gray-200",
+                        clientIndex % 2 === 0 ? "bg-gray-50" : "bg-white"
+                      )}>
+                        <td
+                          className="py-3 px-2 font-semibold sticky left-0"
+                          style={{ backgroundColor: clientIndex % 2 === 0 ? "#f9fafb" : "white" }}
+                          rowSpan={clientBudgetTypes.length + 1}
+                        >
+                          <div>{clientData.clientName}</div>
+                          {clientData.subscriptionAmount && (
+                            <div className="text-xs text-green-600 font-normal">
+                              Abo: {formatCurrency(clientData.subscriptionAmount)}/mnd
+                            </div>
+                          )}
+                        </td>
+                        <td
+                          className="text-center py-3 px-2 font-semibold"
+                          rowSpan={clientBudgetTypes.length + 1}
+                        >
+                          <Badge variant="outline">{clientData.clientType}</Badge>
+                        </td>
+                        {/* Empty cells for header row with totals */}
+                        {DUTCH_MONTHS_SHORT.map((_, monthIndex) => {
+                          const monthTotal = BUDGET_TYPES.reduce(
+                            (sum, type) => sum + (clientData.budgetsByType[type]?.[monthIndex] || 0),
+                            0
+                          )
+                          return (
+                            <td key={monthIndex} className="text-right py-3 px-2 font-semibold text-gray-600">
+                              {monthTotal > 0 ? formatCurrency(monthTotal) : "-"}
+                            </td>
+                          )
+                        })}
+                        <td className="text-right py-3 px-2 font-bold bg-gray-100">
+                          {formatCurrency(clientData.grandTotal)}
+                        </td>
+                      </tr>
+                      {/* Budget type rows */}
+                      {clientBudgetTypes.map((budgetType) => (
+                        <tr
+                          key={`${clientData.clientId}-${budgetType}`}
+                          className={cn(
+                            "text-sm",
+                            clientIndex % 2 === 0 ? "bg-gray-50" : "bg-white"
+                          )}
+                        >
+                          {DUTCH_MONTHS_SHORT.map((_, monthIndex) => {
+                            const amount = clientData.budgetsByType[budgetType]?.[monthIndex] || 0
+                            return (
+                              <td
+                                key={monthIndex}
+                                className={cn(
+                                  "text-right py-1 px-2",
+                                  amount > 0 ? "text-gray-700" : "text-gray-300"
+                                )}
+                              >
+                                <span className={cn(
+                                  "inline-block px-1 rounded text-xs",
+                                  amount > 0 && BUDGET_TYPE_COLORS[budgetType]
+                                )}>
+                                  {amount > 0 ? formatCurrency(amount) : "-"}
+                                </span>
+                              </td>
+                            )
+                          })}
+                          <td className={cn(
+                            "text-right py-1 px-2 font-medium",
+                            BUDGET_TYPE_COLORS[budgetType],
+                            "bg-opacity-50"
+                          )}>
+                            <div className="flex items-center justify-end gap-2">
+                              <span className="text-xs">{BUDGET_TYPE_LABELS[budgetType]}</span>
+                              <span>{formatCurrency(clientData.totals[budgetType])}</span>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </React.Fragment>
+                  )
+                })}
+              </tbody>
+              <tfoot>
+                {/* Totals per budget type */}
+                {activeBudgetTypes.map((budgetType) => (
+                  <tr key={budgetType} className="border-t">
+                    <td className="py-2 px-2 font-medium sticky left-0 bg-white">
+                      <span className={cn("px-2 py-1 rounded text-xs", BUDGET_TYPE_COLORS[budgetType])}>
+                        {BUDGET_TYPE_LABELS[budgetType]}
+                      </span>
                     </td>
-                    {clientData.monthlyBudgets.map((budget, index) => (
-                      <td
-                        key={index}
-                        className={cn(
-                          "text-right py-2 px-2",
-                          budget > 0 ? "text-gray-900" : "text-gray-300"
-                        )}
-                      >
-                        {budget > 0 ? formatCurrency(budget) : "-"}
+                    <td></td>
+                    {DUTCH_MONTHS_SHORT.map((_, monthIndex) => (
+                      <td key={monthIndex} className="text-right py-2 px-2 font-medium">
+                        {formatCurrency(yearlyOverview.monthlyTotals[budgetType]?.[monthIndex] || 0)}
                       </td>
                     ))}
-                    <td className="text-right py-2 px-2 font-medium">
-                      {formatCurrency(clientData.totalBudget)}
+                    <td className={cn("text-right py-2 px-2 font-bold", BUDGET_TYPE_COLORS[budgetType])}>
+                      {formatCurrency(yearlyOverview.yearlyTotals[budgetType] || 0)}
                     </td>
                   </tr>
                 ))}
-              </tbody>
-              <tfoot>
-                <tr className="border-t-2 font-medium">
-                  <td className="py-2 px-2">Totaal</td>
-                  {yearlyData.months.map((monthData) => (
-                    <td key={monthData.month} className="text-right py-2 px-2">
-                      {formatCurrency(monthData.summary.totalBudget)}
-                    </td>
-                  ))}
-                  <td className="text-right py-2 px-2">
-                    {formatCurrency(yearlyData.yearlySummary.totalBudget)}
+                {/* Grand total row */}
+                <tr className="border-t-2 border-gray-400 bg-gray-100">
+                  <td className="py-3 px-2 font-bold sticky left-0 bg-gray-100">TOTAAL</td>
+                  <td></td>
+                  {DUTCH_MONTHS_SHORT.map((_, monthIndex) => {
+                    const monthTotal = BUDGET_TYPES.reduce(
+                      (sum, type) => sum + (yearlyOverview.monthlyTotals[type]?.[monthIndex] || 0),
+                      0
+                    )
+                    return (
+                      <td key={monthIndex} className="text-right py-3 px-2 font-bold">
+                        {formatCurrency(monthTotal)}
+                      </td>
+                    )
+                  })}
+                  <td className="text-right py-3 px-2 font-bold text-lg">
+                    {formatCurrency(yearlyOverview.grandTotal)}
                   </td>
                 </tr>
               </tfoot>
@@ -695,7 +797,7 @@ export default function ForecastPage() {
     )
   }
 
-  if (isLoading || (viewMode === "month" && !data) || (viewMode === "year" && !yearlyData)) {
+  if (isLoading) {
     return (
       <div className="p-6">
         <Header
@@ -817,7 +919,7 @@ export default function ForecastPage() {
                           <div>
                             <div className="font-medium">{item.clientName}</div>
                             <div className="text-sm text-muted-foreground">
-                              {getBudgetTypeLabel(item.budgetType)}
+                              {BUDGET_TYPE_LABELS[item.budgetType] || item.budgetType}
                             </div>
                           </div>
                           <Badge variant="danger">{formatCurrency(item.unallocatedAmount)}</Badge>
@@ -833,21 +935,21 @@ export default function ForecastPage() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <Card>
                 <CardContent className="pt-6">
-                  <div className="text-2xl font-bold">{data!.summary.clientCount}</div>
+                  <div className="text-2xl font-bold">{data?.summary.clientCount || 0}</div>
                   <p className="text-sm text-muted-foreground">Klanten</p>
                 </CardContent>
               </Card>
               <Card>
                 <CardContent className="pt-6">
-                  <div className="text-2xl font-bold">{formatCurrency(data!.summary.totalBudget)}</div>
+                  <div className="text-2xl font-bold">{formatCurrency(data?.summary.totalBudget || 0)}</div>
                   <p className="text-sm text-muted-foreground">Totaal budget</p>
                 </CardContent>
               </Card>
               <Card>
                 <CardContent className="pt-6">
-                  <div className="text-2xl font-bold">{formatCurrency(data!.summary.totalAllocated)}</div>
+                  <div className="text-2xl font-bold">{formatCurrency(data?.summary.totalAllocated || 0)}</div>
                   <p className="text-sm text-muted-foreground">
-                    Toegewezen ({((data!.summary.totalAllocated / data!.summary.totalBudget) * 100 || 0).toFixed(0)}%)
+                    Toegewezen ({((data?.summary.totalAllocated || 0) / (data?.summary.totalBudget || 1) * 100).toFixed(0)}%)
                   </p>
                 </CardContent>
               </Card>
@@ -855,14 +957,14 @@ export default function ForecastPage() {
 
             {/* Client List */}
             <div className="space-y-4">
-              {data!.clients.length === 0 ? (
+              {!data?.clients.length ? (
                 <Card>
                   <CardContent className="py-8 text-center text-gray-500">
                     Geen klanten met budget voor deze maand
                   </CardContent>
                 </Card>
               ) : (
-                data!.clients.map((clientForecast) => (
+                data.clients.map((clientForecast) => (
                   <Collapsible
                     key={clientForecast.client.id}
                     open={expandedClients.has(clientForecast.client.id)}
